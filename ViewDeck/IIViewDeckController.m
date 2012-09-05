@@ -1609,8 +1609,9 @@ __typeof__(h) __h = (h);                                    \
             
             if (barHidden) 
                 navController.navigationBarHidden = NO;
-            
-            [self addPanners];
+
+            self.centerTapper = nil;
+            [self centerViewHidden];
             [self applyShadowToSlidingView];
             [controller vdc_viewDidAppear:NO];
         };
