@@ -88,8 +88,8 @@ __typeof__(h) __h = (h);                                    \
 #import <objc/message.h>
 #import "WrapController.h"
 
-#define DURATION_FAST 0.3
-#define DURATION_SLOW 0.3
+#define DURATION_FAST 0.25
+#define DURATION_SLOW 0.25
 #define SLIDE_DURATION(animated,duration) ((animated) ? (duration) : 0)
 #define OPEN_SLIDE_DURATION(animated) SLIDE_DURATION(animated,DURATION_FAST)
 #define CLOSE_SLIDE_DURATION(animated) SLIDE_DURATION(animated,DURATION_SLOW)
@@ -205,8 +205,11 @@ __typeof__(h) __h = (h);                                    \
 @synthesize rotationBehavior = _rotationBehavior;
 @synthesize enabled = _enabled;
 @synthesize elastic = _elastic;
+@synthesize parallax = _parallax;
 @synthesize automaticallyUpdateTabBarItems = _automaticallyUpdateTabBarItems;
 @synthesize panningGestureDelegate = _panningGestureDelegate;
+@synthesize bouncing = _bouncing;
+
 
 #pragma mark - Initalisation and deallocation
 
@@ -386,6 +389,12 @@ __typeof__(h) __h = (h);                                    \
     _offset = [self limitOffset:offset];
     self.slidingControllerView.frame = [self slidingRectForOffset:_offset];
     [self performOffsetDelegate:@selector(viewDeckController:slideOffsetChanged:) offset:_offset];
+
+    if (self.parallax) {
+        CGRect r = self.leftController.view.frame;
+        r.origin.x = - (r.size.width - self.leftLedge) / 6 + offset / 6;
+        self.leftController.view.frame = r;
+    }
 }
 
 - (void)hideAppropriateSideViews {
@@ -553,7 +562,12 @@ __typeof__(h) __h = (h);                                    \
         self.centerView.frame = self.centerViewBounds;
         self.centerController.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         self.centerController.view.frame = self.centerView.bounds;
-        self.leftController.view.frame = self.sideViewBounds;
+
+        CGRect r = self.sideViewBounds;
+        if (self.parallax) {
+            r.origin.x = -(r.size.width - self.leftLedge) / 6;
+        }
+        self.leftController.view.frame = r;
         self.leftController.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         self.rightController.view.frame = self.sideViewBounds;
         self.rightController.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -777,15 +791,29 @@ __typeof__(h) __h = (h);                                    \
     if (callDelegate && ![self checkDelegate:@selector(viewDeckControllerWillOpenLeftView:animated:) animated:animated]) return NO;
     // also close the right view if it's open. Since the delegate can cancel the close, check the result.
     if (callDelegate && ![self closeRightViewAnimated:animated options:options callDelegate:callDelegate completion:completed]) return NO;
-    
-    [UIView animateWithDuration:OPEN_SLIDE_DURATION(animated) delay:0 options:options | UIViewAnimationOptionLayoutSubviews | UIViewAnimationOptionBeginFromCurrentState animations:^{
-        self.leftController.view.hidden = NO;
-        [self setSlidingFrameForOffset:self.referenceBounds.size.width - self.leftLedge];
-        [self centerViewHidden];
-    } completion:^(BOOL finished) {
+
+    CGFloat destination = self.referenceBounds.size.width - self.leftLedge;
+    void (^completion)(BOOL) = ^(BOOL finished) {
         if (completed) completed(self);
         if (callDelegate) [self performDelegate:@selector(viewDeckControllerDidOpenLeftView:animated:) animated:animated];
-    }];
+    };
+    void (^step3)(BOOL) = ^(BOOL finished) {
+        [UIView animateWithDuration:0.1 delay:0 options:options animations:^{
+            [self setSlidingFrameForOffset:destination];
+        } completion:completion];
+    };
+    void (^step2)(BOOL) = ^(BOOL finished) {
+        [UIView animateWithDuration:0.15 delay:0 options:options animations:^{
+            [self setSlidingFrameForOffset:destination - 15];
+        } completion:step3];
+    };
+    void (^step1)() = ^{
+        self.leftController.view.hidden = NO;
+        [self setSlidingFrameForOffset:destination + (_bouncing ? 30 : 0)];
+        [self centerViewHidden];
+    };
+    [UIView animateWithDuration:OPEN_SLIDE_DURATION(animated) delay:0 options:options | UIViewAnimationOptionLayoutSubviews | UIViewAnimationOptionBeginFromCurrentState
+                     animations:step1 completion:_bouncing ? step2 : completion];
     
     return YES;
 }
@@ -813,14 +841,14 @@ __typeof__(h) __h = (h);                                    \
     // first open the view completely, run the block (to allow changes)
     [UIView animateWithDuration:OPEN_SLIDE_DURATION(YES) delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionLayoutSubviews animations:^{
         self.leftController.view.hidden = NO;
-        [self setSlidingFrameForOffset:self.referenceBounds.size.width];
+        [self setSlidingFrameForOffset:self.referenceBounds.size.width - self.leftLedge + 20];
     } completion:^(BOOL finished) {
         // run block if it's defined
         if (bounced) bounced(self);
         [self centerViewHidden];
         
         // now slide the view back to the ledge position
-        [UIView animateWithDuration:OPEN_SLIDE_DURATION(YES) delay:0 options:options | UIViewAnimationOptionLayoutSubviews | UIViewAnimationOptionBeginFromCurrentState animations:^{
+        [UIView animateWithDuration:OPEN_SLIDE_DURATION(YES)/2 delay:0 options:options | UIViewAnimationOptionLayoutSubviews | UIViewAnimationOptionBeginFromCurrentState animations:^{
             [self setSlidingFrameForOffset:self.referenceBounds.size.width - self.leftLedge];
         } completion:^(BOOL finished) {
             if (completed) completed(self);
@@ -848,18 +876,31 @@ __typeof__(h) __h = (h);                                    \
     
     // check the delegate to allow closing
     if (callDelegate && ![self checkDelegate:@selector(viewDeckControllerWillCloseLeftView:animated:) animated:animated]) return NO;
-    
-    [UIView animateWithDuration:CLOSE_SLIDE_DURATION(animated) delay:0 options:options | UIViewAnimationOptionLayoutSubviews animations:^{
-        [self setSlidingFrameForOffset:0];
-        [self centerViewVisible];
-    } completion:^(BOOL finished) {
+
+
+    void (^completion)(BOOL) = ^(BOOL finished) {
         [self hideAppropriateSideViews];
         if (completed) completed(self);
         if (callDelegate) {
             [self performDelegate:@selector(viewDeckControllerDidCloseLeftView:animated:) animated:animated];
             [self performDelegate:@selector(viewDeckControllerDidShowCenterView:animated:) animated:animated];
         }
-    }];
+    };
+    void (^step3)(BOOL) = ^(BOOL finished) {
+        [UIView animateWithDuration:0.1 delay:0 options:options animations:^{
+            [self setSlidingFrameForOffset:0];
+        } completion:completion];
+    };
+    void (^step2)(BOOL) = ^(BOOL finished) {
+        [UIView animateWithDuration:0.15 delay:0 options:options animations:^{
+            [self setSlidingFrameForOffset:15];
+        } completion:step3];
+    };
+    void (^step1)() = ^{
+        [self setSlidingFrameForOffset:0];
+        [self centerViewVisible];
+    };
+    [UIView animateWithDuration:CLOSE_SLIDE_DURATION(animated) delay:0 options:options | UIViewAnimationOptionLayoutSubviews animations:step1 completion:_bouncing ? step2 : completion];
     
     return YES;
 }
@@ -880,7 +921,7 @@ __typeof__(h) __h = (h);                                    \
     
     // first open the view completely, run the block (to allow changes) and close it again.
     [UIView animateWithDuration:OPEN_SLIDE_DURATION(YES) delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionLayoutSubviews animations:^{
-        [self setSlidingFrameForOffset:self.referenceBounds.size.width];
+        [self setSlidingFrameForOffset:self.referenceBounds.size.width - self.leftLedge + 20];
     } completion:^(BOOL finished) {
         // run block if it's defined
         if (bounced) bounced(self);

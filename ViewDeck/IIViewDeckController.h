@@ -78,6 +78,8 @@ typedef void (^IIViewDeckControllerBlock) (IIViewDeckController *controller);
 @property (nonatomic, readonly, retain) NSArray* controllers;
 @property (nonatomic, getter=isEnabled) BOOL enabled;
 @property (nonatomic) BOOL elastic;
+@property (nonatomic) BOOL parallax;
+@property (nonatomic) BOOL bouncing;
 
 @property (nonatomic) CGFloat leftLedge;
 @property (nonatomic) CGFloat rightLedge;
