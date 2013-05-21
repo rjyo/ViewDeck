@@ -702,7 +702,17 @@ __typeof__(h) __h = (h);                                    \
         self.rightLedge = self.rightLedge + self.referenceBounds.size.width - _preRotationWidth; 
         self.maxLedge = self.maxLedge + self.referenceBounds.size.width - _preRotationWidth; 
     }
-    [self setSlidingFrameForOffset:offset];
+    
+    //fix ios 5 rotation issue
+    if (offset) {
+        [self setSlidingFrameForOffset:320];
+        CGRect f = self.leftController.view.frame;
+        f.origin.x = 0.0;
+        self.leftController.view.frame = f;
+    }
+    else {
+        [self setSlidingFrameForOffset:offset];
+    }
     
     _preRotationWidth = 0;
 }
